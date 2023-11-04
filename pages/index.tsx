@@ -1,56 +1,60 @@
-import fs from 'fs';
-import path from 'path';
-import React from 'react';
+import { marked } from 'marked';
+import React, { useState } from 'react';
 
-// マークダウンファイルの型を定義
 interface MarkdownFile {
   title: string;
   slug: string;
+  content: string;
 }
 
 // ページコンポーネント
 const HomePage = ({ markdownFiles }: { markdownFiles: MarkdownFile[] }) => {
+  const [selectedSlug, setSelectedSlug] = useState(markdownFiles[0]?.slug);
+  const selectedMarkdownFile = markdownFiles.find(file => file.slug === selectedSlug);
+
   return (
     <div>
       <h1>ドキュメント一覧</h1>
       <ul>
         {markdownFiles.map((file) => (
-          <li key={file.slug}>{file.title}</li>
+          <li key={file.slug} onClick={() => setSelectedSlug(file.slug)}>
+            {file.title}
+          </li>
         ))}
       </ul>
+      <div dangerouslySetInnerHTML={{ __html: selectedMarkdownFile?.content ?? 'Content not found' }} />
     </div>
   );
 };
 
 // getStaticProps 関数
 export async function getStaticProps() {
+  const path = require('path');
+  const fs = require('fs');
   const docsDirectory = path.join(process.cwd(), 'docs');
-  let filenames;
-  try {
-    filenames = fs.readdirSync(docsDirectory);
-  } catch (error) {
-    console.error('Error reading the docs directory:', error);
-    return { props: { markdownFiles: [] } }; // エラーがあった場合は空の配列を返す
-  }
 
-  const markdownFiles = filenames
-    .filter((filename) => filename.endsWith('.md'))
-    .map((filename) => {
-      const slug = filename.replace(/\.md$/, '');
-      const fullPath = path.join(docsDirectory, filename);
-      let fileContents;
-      try {
-        fileContents = fs.readFileSync(fullPath, 'utf8');
-      } catch (error) {
-        console.error(`Error reading markdown file ${filename}:`, error);
-        return null;
+  // 再帰的にディレクトリを読み込むためのヘルパー関数を getStaticProps 内に配置
+  const getAllMarkdownFiles = (dirPath: string, arrayOfFiles: MarkdownFile[] = [], rootPath: string) => {
+    const files = fs.readdirSync(dirPath);
+
+    files.forEach(file => {
+      if (fs.statSync(path.join(dirPath, file)).isDirectory()) {
+        arrayOfFiles = getAllMarkdownFiles(path.join(dirPath, file), arrayOfFiles, rootPath);
+      } else if (file.endsWith('.md')) {
+        const fullPath = path.join(dirPath, file);
+        const fileContents = fs.readFileSync(fullPath, 'utf8');
+        const titleMatch = fileContents.match(/^# (.*)\n/);
+        const title = titleMatch ? titleMatch[1] : path.basename(file, '.md');
+        const content = marked(fileContents);
+        const slug = fullPath.replace(rootPath, '').replace(/^\/+/, '').replace(/\.md$/, '');
+        arrayOfFiles.push({ title, slug, content });
       }
-      // マークダウンのタイトルを抽出（ここでは `##` 見出しを想定）
-      const titleMatch = fileContents.match(/^## (.*)\n/);
-      const title = titleMatch ? titleMatch[1] : slug;
-      return { title, slug };
-    })
-    .filter(Boolean); // null値をフィルタリングする
+    });
+
+    return arrayOfFiles;
+  };
+
+  const markdownFiles = getAllMarkdownFiles(docsDirectory, [], docsDirectory);
 
   return {
     props: {
